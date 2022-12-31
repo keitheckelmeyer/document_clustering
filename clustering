@@ -1,0 +1,184 @@
+import csv
+import glob
+import os
+import time
+import tracemalloc
+import PyPDF2
+import mammoth
+import pandas as pd
+from openpyxl import load_workbook
+from concurrent.futures import ProcessPoolExecutor as PPE
+
+# TODO: Improved error handling
+
+
+DIRECTORIES = ['Y:\\', 'Z:\\']
+
+def h_m_s(seconds):
+    h = int(seconds/3600)
+    m = int((seconds - (h * 3600))/60)
+    s = seconds - ((h*3600) + (m*60))
+    return h, m, s
+
+def get_time_passed(seconds):
+    h, m, s = h_m_s(seconds)
+    return f"{h} hour(s), {m} minute(s), and {s} second(s)"
+
+def get_files():
+    files: list[str] = []
+    for d in DIRECTORIES:
+        files.extend(glob.glob(d + '\\**', recursive=True))
+    print(f"Number of files: {len(files)}")
+    return files
+
+def replace_chars(contents):
+    # TODO: use regex
+    replace_list = ['\n', '\t', '     ', '    ', '   ', '  ']
+    for replace_ in replace_list:
+        contents = contents.replace(replace_, " ")
+    return contents
+
+def get_file_contents(file):
+    # TODO: improve handling for different encodings
+    try:
+        with open(file, 'r', errors='namereplace') as f:
+            contents = f.read()
+        return contents
+    except:
+        return "ERROR"
+
+def get_pdf_contents(file):
+    # TODO: expand to perform OCR for PDFs that contain text as images(?)
+    # TODO: improve handling for different encodings
+    pdf_contents = ''
+    try:
+        pdf = PyPDF2.PdfReader(file, strict=False)
+        for n in range(len(pdf.pages)):
+            pdf_contents += (pdf.pages[n]).extract_text()
+        pdf_contents = replace_chars(pdf_contents)
+        return pdf_contents
+    except:
+        return "ERROR"
+
+def get_txt_contents(file):
+    contents = get_file_contents(file)
+    contents = replace_chars(contents)
+    return contents
+
+def get_csv_contents(file):
+    text = ''
+    try:
+        contents = get_file_contents(file)
+        csvreader = csv.reader(contents)
+
+        # extracting field names through first row
+        fields = next(csvreader)
+        for field in fields:
+            text += field + " "
+
+        # extracting each data row one by one
+        for row in csvreader:
+            for cell in row:
+                text += cell + " "
+        text = replace_chars(text)
+        return text
+    except:
+        return "ERROR"
+
+def get_docx_contents(file):
+    try:
+        with open(file, "rb") as docx_file:
+            result = mammoth.extract_raw_text(docx_file)
+            text = result.value + " "  # The raw text
+            messages = result.messages  # Any messages
+        for msg in messages:
+            text += msg + " "
+        text = replace_chars(text)
+        return text
+    except:
+        return "ERROR"
+
+def get_doc_contents(file):
+    # TODO
+    pass
+
+def get_xls_contents(file):
+    # TODO
+    pass
+
+def get_xlsx_contents(file):
+    # TODO: improve handling for different encodings
+    try:
+        content = ''
+        wb = load_workbook(file)
+        for ws in wb:
+            for row in ws.values:
+                for value in row:
+                    content += str(value) + " "
+        content = replace_chars(content)
+        return content
+    except:
+        return "ERROR"
+
+def get_contents(row):
+    d = {
+        'pdf': get_pdf_contents,
+        'txt': get_txt_contents,
+        'docx': get_docx_contents,
+        'xlsx': get_xlsx_contents,
+        'xlsm': get_xlsx_contents,
+        'csv': get_csv_contents,
+    }
+    if row['file_extension'] in d.keys():
+        result = d[row['file_extension']](row['full_path'])
+        row['contents'] = result
+    return row
+
+def main():
+    tracemalloc.start()
+    if not os.path.exists('file_data.csv'):
+        files = get_files()
+
+        df = pd.DataFrame(files, columns=['full_path'], dtype='string')
+
+        print(df.head())
+        df['is_file'] = df['full_path'].apply(lambda row: os.path.isfile(row))
+        df['file_name'] = df['full_path'].apply(lambda row: os.path.basename(row))
+        df['file_extension'] = df['file_name'].apply(lambda row: row.split(".")[-1])
+        print(df.shape)
+        #df['contents'] = df.apply(get_contents, axis=1)
+
+        dict_list = df.to_dict('records')
+        chunk = int(len(dict_list)/10)
+        with PPE() as executor:
+            results = executor.map(get_contents, dict_list, chunksize=chunk)
+
+        df = pd.DataFrame.from_records(results)
+
+        print(df.shape)
+        df['content_size'] = df['contents'].apply(lambda row: len(row.split(" ")) if row else 0)
+
+        df1 = df[df['content_size'] > 0]
+        df.to_csv('file_data.csv')
+        print(df.shape)
+        # print(df.head(20))
+        df1.to_csv('text_file_data.csv')
+    else:
+        df1 = pd.read_csv('text_file_data.csv')
+    print(df1)
+    current, max_ = tracemalloc.get_traced_memory()
+    current_mb = current/1_048_576
+    max_mb = max_/1_048_576
+    print(f"memory use: {max_mb} MB")
+
+    tracemalloc.stop()
+    
+    # vectorize
+    # determine number of clusters
+    # cluster
+
+if __name__ == '__main__':
+    start = time.time()
+    main()
+    end = time.time()
+    print(f"Time: {get_time_passed(end-start)}")
