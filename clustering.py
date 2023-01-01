@@ -192,16 +192,54 @@ def main():
         with open("file_obj_list.pickle", 'rb') as f:
             results = pickle.loads(f.read())
 
+    if not os.path.exists("vector.pickle"):
+        file_list = []
+        text_list = []
+        for r in results:
+            if r.content:
+                file_list.append(r.file_path)
+                text_list.append(r.content)
+
+        # vectorize
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        vectorizer = TfidfVectorizer(stop_words=['english'])
+        x = vectorizer.fit_transform(text_list)
+        with open("vector.pickle", 'wb') as f:
+            f.write(pickle.dumps((file_list, x)))
+    else:
+        with open("vector.pickle", 'rb') as f:
+            file_list, x = pickle.loads(f.read())
+
+    # determine number of clusters
+    import matplotlib.pyplot as plt
+    from sklearn.cluster import KMeans
+    Sum_of_squared_distances = []
+    K = range(2, 10)
+    for k in K:
+        km = KMeans(n_clusters=k, max_iter=200, n_init=10)
+        km = km.fit(x)
+        Sum_of_squared_distances.append(km.inertia_)
+    
+    # plt.plot(K, Sum_of_squared_distances, 'bx-')
+    # plt.xlabel('k')
+    # plt.ylabel('Sum_of_squared_distances')
+    # plt.title('Elbow Method For Optimal k')
+    # plt.show()
+
+    # cluster
+    true_k = 7
+    model = KMeans(n_clusters=true_k, init='k-means++', max_iter=200, n_init=10)
+    model.fit(x)
+    labels = model.labels_
+    wiki_cl = pd.DataFrame(list(zip(file_list, labels)), columns=['title', 'cluster'])
+    print(wiki_cl.sort_values(by=['cluster']))
+
     current, max_ = tracemalloc.get_traced_memory()
     current_mb = current / 1_048_576
     max_mb = max_ / 1_048_576
     print(f"memory use: {max_mb} MB")
 
     tracemalloc.stop()
-
-    # vectorize
-    # determine number of clusters
-    # cluster
 
 
 if __name__ == '__main__':
