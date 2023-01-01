@@ -9,59 +9,65 @@ import mammoth
 import pandas as pd
 from openpyxl import load_workbook
 from concurrent.futures import ProcessPoolExecutor as PPE
+import logging
+
+logger = logging.getLogger("PyPDF2")
+logger.setLevel(logging.CRITICAL)
 
 DIRECTORIES = ['Y:\\', 'Z:\\']
 
-def h_m_s(seconds):
+
+def h_m_s(seconds: float) -> tuple:
     h = int(seconds / 3600)
     m = int((seconds - (h * 3600)) / 60)
     s = seconds - ((h * 3600) + (m * 60))
     return h, m, s
 
 
-def get_time_passed(seconds):
+def get_time_passed(seconds: float) -> str:
     h, m, s = h_m_s(seconds)
     return f"{h} hour(s), {m} minute(s), and {s} second(s)"
 
 
-def get_files():
+def get_files() -> list[str]:
     files: list[str] = []
     for d in DIRECTORIES:
         files.extend(glob.glob(d + "\\**\\*", recursive=True))
     print(f"Number of files: {len(files)}")
     return files
 
+
 class File:
 
-    def __init__(self, file_path):
-        self.file_path = file_path
-        self.is_file = os.path.isfile(self.file_path)
-        self.file_name = os.path.basename(self.file_path) if self.is_file else None
-        self.extension = (self.file_name.split("."))[-1] if self.is_file else None
-        self.content = None
+    def __init__(self, file_path: str):
+        self.file_path: str = file_path
+        self.is_file: bool = os.path.isfile(self.file_path)
+        self.file_name: str = os.path.basename(self.file_path) if self.is_file else None
+        self.extension: str = (self.file_name.split("."))[-1] if self.is_file else None
+        self.content: str = ''
         self._get_content()
 
-    def _replace_chars(self, contents):
+    @staticmethod
+    def _replace_chars(contents: str) -> str:
         # TODO: use regex
-        replace_list = ['\n', '\t', '     ', '    ', '   ', '  ']
+        replace_list: list[str] = ['\n', '\t', '     ', '    ', '   ', '  ']
         for replace_ in replace_list:
-            contents = contents.replace(replace_, " ")
+            contents: str = contents.replace(replace_, " ")
         return contents
 
-    def _get_file_contents(self):
+    def _get_file_contents(self) -> str:
         # TODO: improve handling for different encodings
         try:
             with open(self.file_path, 'r', errors='namereplace') as f:
-                contents = f.read()
+                contents: str = f.read()
             return contents
         except:
             return "ERROR"
 
-
-    def _get_pdf_contents(self):
+    def _get_pdf_contents(self) -> str:
         # TODO: expand to perform OCR for PDFs that contain text as images(?)
         # TODO: improve handling for different encodings
-        pdf_contents = ''
+        pdf_contents: str = ''
         try:
             pdf = PyPDF2.PdfReader(self.file_path, strict=False)
             for n in range(len(pdf.pages)):
@@ -71,15 +77,15 @@ class File:
         except:
             return "ERROR"
 
-    def _get_txt_contents(self):
-        contents = self._get_file_contents()
+    def _get_txt_contents(self) -> str:
+        contents: str = self._get_file_contents()
         contents = self._replace_chars(contents)
         return contents
 
-    def _get_csv_contents(self):
-        text = ''
+    def _get_csv_contents(self) -> str:
+        text: str = ''
         try:
-            contents = self._get_file_contents()
+            contents: str = self._get_file_contents()
             csvreader = csv.reader(contents)
 
             # extracting field names through first row
@@ -96,11 +102,11 @@ class File:
         except:
             return "ERROR"
 
-    def _get_docx_contents(self):
+    def _get_docx_contents(self) -> str:
         try:
             with open(self.file_path, "rb") as docx_file:
                 result = mammoth.extract_raw_text(docx_file)
-                text = result.value + " "  # The raw text
+                text: str = result.value + " "  # The raw text
                 messages = result.messages  # Any messages
             for msg in messages:
                 text += msg + " "
@@ -117,10 +123,10 @@ class File:
         # TODO
         pass
 
-    def _get_xlsx_contents(self):
+    def _get_xlsx_contents(self) -> str:
         # TODO: improve handling for different encodings
         try:
-            content = ''
+            content: str = ''
             wb = load_workbook(self.file_path)
             for ws in wb:
                 for row in ws.values:
@@ -132,7 +138,7 @@ class File:
             return "ERROR"
 
     def _get_content(self):
-        d = {
+        d: dict = {
             'pdf': self._get_pdf_contents(),
             'txt': self._get_txt_contents(),
             'docx': self._get_docx_contents(),
@@ -146,19 +152,33 @@ class File:
             self.content = None
 
 
-def init_file_object(file_path):
+def init_file_object(file_path) -> File:
     return File(file_path)
 
 def main():
     tracemalloc.start()
-    if not os.path.exists('file_obj_list.pickle'):
-        files = get_files()
+    if not os.path.exists('file_list.pickle'):
+        files: list[str] = get_files()
+        with open("file_list.pickle", 'wb') as f:
+            f.write(pickle.dumps(files))
+    else:
+        with open("file_list.pickle", 'rb') as f:
+            files = pickle.loads(f.read())
+    print(f"files found: {len(files)}")
+
+    if not os.path.exists("filtered_file_list.pickle"):
         exts = ['pdf', 'txt', 'docx', 'xlsx', 'xlsm', 'csv', 'html', 'htm']
         files = list(filter(lambda x: (x.split("."))[-1] in exts, files))
-        num_files = len(files)
+        with open("filtered_file_list.pickle", 'wb') as f:
+            f.write(pickle.dumps(files))
+    else:
+        with open("filtered_file_list.pickle", 'rb') as f:
+            files = pickle.loads(f.read())
+    print(f"filtered files found: {len(files)}")
 
+    if not os.path.exists("file_obj_list.pickle"):
         with PPE() as executor:
-            results = list(executor.map(init_file_object, files, chunksize=int(num_files/os.cpu_count() )))
+            results = list(executor.map(init_file_object, files))
 
         # results = []
         # for n, file in enumerate(files):
